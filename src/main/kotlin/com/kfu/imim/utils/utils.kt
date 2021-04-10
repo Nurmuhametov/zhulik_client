@@ -25,7 +25,7 @@ data class StartGameInfo(val move: Boolean,
                          val height: Int,
                          val position: List<Int>,
                          val opponentPosition: List<Int>,
-                         val barriers: Set<Array<Array<Int>>>)
+                         val barriers: MutableSet<Array<Array<Int>>>)
 //@Serializable
 //class Obstacle private constructor (val from1: Position, val to1: Position, val from2: Position, val to2: Position) {
 //    constructor(array: List<Position>) : this(array[0], array[1], array[2], array[3])
@@ -44,7 +44,7 @@ data class StartGameInfo(val move: Boolean,
 //    }
 //}
 @Serializable
-data class Field(val width: Int, val height: Int, val position: List<Int>, val opponentPosition: List<Int>, val barriers: Set<Array<Array<Int>>>)
+data class Field(val width: Int, val height: Int, val position: List<Int>, val opponentPosition: List<Int>, val barriers: MutableSet<Array<Array<Int>>>)
 @Serializable
 data class Results(val result: String, val width: Int, val height: Int, val position: List<Int>, val opponentPosition: List<Int>, val barriers: Set<Array<Array<Int>>>)
 @Serializable
