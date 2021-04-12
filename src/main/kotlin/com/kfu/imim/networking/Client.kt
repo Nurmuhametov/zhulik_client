@@ -7,38 +7,54 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.net.Socket
+import kotlin.concurrent.thread
 
 class Client(private val gamesCount: Int, serverAddress: String, serverPort: Int) {
     private val communicator = Communicator(Socket(serverAddress, serverPort))
     private val channel = Channel<String>(1)
+    private val stepsChannel = Channel<String>(1)
 
     fun start() {
         communicator.addDataReceivedListener(::dataReceived)
         communicator.start()
+        println("Login: start")
         login()
         repeat(gamesCount) {
             playGame()
         }
+        communicator.sendData("DISCONNECT {\"QUIT\":\"\"}")
     }
 
     private fun playGame() {
-        //TODO("Not yet implemented")
         val lobbyInfo = joinLobby()
         val startGameInfo = waitForStart()
         val game = Game(startGameInfo, lobbyInfo)
         game.addSendListener(::sendData)
-        val res = game.play()
-        println(res)
+        game.addReceiveListener(::receiveStep)
+        thread {
+            val res = game.play()
+            println(res)
+            println("Play game: success")
+        }
     }
 
     private fun sendData(data: String) {
         communicator.sendData(data)
     }
 
+    private fun receiveStep() : String {
+        val str: String
+        runBlocking {
+            str = stepsChannel.receive()
+        }
+        return str
+    }
+
     private fun waitForStart() : StartGameInfo{
+        println("Play game: waiting")
         return runBlocking {
             val data = channel.receive()
-            Json.decodeFromString(data)
+            Json.decodeFromString(data.removePrefix("SOCKET STARTGAME"))
         }
     }
 
@@ -51,6 +67,7 @@ class Client(private val gamesCount: Int, serverAddress: String, serverPort: Int
         }
         val joinLobbyResponse = Json.decodeFromString<JoinLobbyResponse>(response)
         assert(joinLobbyResponse.SUCCESS)
+        println("Join lobby: success")
         return joinLobbyResponse.DATA
     }
 
@@ -63,9 +80,19 @@ class Client(private val gamesCount: Int, serverAddress: String, serverPort: Int
         }
         val msg = Json.decodeFromString<Message>(response)
         assert(msg.MESSAGE == "LOGIN OK")
+        println("Login: success")
     }
 
     private fun dataReceived(data: String) {
-        //TODO()
+        if (data.startsWith("SOCKET STEP") || data.startsWith("SOCKET ENDGAME"))
+            runBlocking {
+                stepsChannel.send(data)
+                println("Received next step")
+            }
+        else {
+            runBlocking {
+                channel.send(data)
+            }
+        }
     }
 }

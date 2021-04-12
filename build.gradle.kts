@@ -24,4 +24,5 @@ dependencies {
 
 val run by tasks.getting(JavaExec::class) {
     standardInput = System.`in`
+    standardOutput = System.`out`
 }

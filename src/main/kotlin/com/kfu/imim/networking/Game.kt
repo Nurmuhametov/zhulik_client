@@ -8,6 +8,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.*
+import kotlin.reflect.KFunction0
 
 class Game(private val startGameInfo: StartGameInfo, lobbyInfo: LobbyInfo) {
     private var isEnded = false
@@ -21,11 +22,12 @@ class Game(private val startGameInfo: StartGameInfo, lobbyInfo: LobbyInfo) {
     private val goal = if (startGameInfo.position[0] == 0) startGameInfo.height - 1 else 0
     private var obstaclesCount = lobbyInfo.playerBarrierCount
     private val send = mutableListOf<(String)->Unit>()
-    private val receive = mutableListOf<(Unit)->String>()
+    private val receive = mutableListOf<KFunction0<String>>()
     private var result = ""
     
     fun play() : String {
         if (startGameInfo.move) {
+            println("I'm first!")
             makeMove()
         } 
         while (true) {
@@ -38,8 +40,9 @@ class Game(private val startGameInfo: StartGameInfo, lobbyInfo: LobbyInfo) {
     }
 
     private fun waitMoveOrEndGame() {
+        println("Play game: waiting turn")
         receive.forEach {
-            val str = it.invoke(Unit)
+            val str = it.invoke()
             if (str.startsWith("SOCKET STEP")) {
                 field = Json.decodeFromString(str.removePrefix("SOCKET STEP"))
             } else {
@@ -48,80 +51,120 @@ class Game(private val startGameInfo: StartGameInfo, lobbyInfo: LobbyInfo) {
                 result = results.result
             }
         }
+        println("Play game: received turn")
     }
 
     private fun makeMove() {
+        println("Play game: calculating turn")
         val moves = expandPlayer()
+        println("Expand player ended")
         val obstacles = if (obstaclesCount > 0) {
             expandObstacles()
         } else null
         val turn = chooseBestTurn(moves, obstacles)
         send.forEach { it.invoke(turn) }
+        println("Play game: turn sent")
     }
 
     private fun chooseBestTurn(moves: List<List<Int>>?, obstacles: Set<Array<Array<Int>>>?): String {
         if (moves != null && obstacles != null) {
+            println("Считаю кратчайший путь для себя")
             val myWay = findShortestWay(field.position, goal)
+            println("Считаю кратчайший путь для врага")
             val opponentsWay = findShortestWay(field.opponentPosition, field.height - 1 - goal)
             if (myWay.size < opponentsWay.size) {
                 field = Field(field.width, field.height, myWay[1], field.opponentPosition, field.barriers)
             } else {
-                val obstacle = findWorstObstacle()
+                println("Ищу самое мерзкое препятствие")
+                val obstacle = findWorstObstacle(obstacles)
                 field.barriers.add(obstacle)
+                obstaclesCount -= 1
             }
         } else if (obstacles == null && moves != null) {
             val move = findShortestWay(field.position, goal)[1]
             field = Field(field.width, field.height, move, field.opponentPosition, field.barriers)
         } else if (obstacles != null && moves == null) {
-            val obstacle = findWorstObstacle()
+            val obstacle = findWorstObstacle(obstacles)
             field.barriers.add(obstacle)
+            obstaclesCount -= 1
         }
+        println("Choose turn ended")
         return "SOCKET STEP " + Json.encodeToString(field)
     }
 
-    private fun findWorstObstacle(): Array<Array<Int>> {
-        //TODO("Исправить")
-        return expandObstacles().first()
+    private fun findWorstObstacle(obstacles: Set<Array<Array<Int>>>): Array<Array<Int>> {
+        var res = obstacles.first()
+        var length = 0
+        for (i in obstacles) {
+            val newSetBarriers = mutableSetOf<Array<Array<Int>>>()
+            newSetBarriers.addAll(field.barriers)
+            newSetBarriers.add(i)
+            val newLength = findShortestWay(field.opponentPosition, field.height - 1 - goal, newSetBarriers).size
+            if (newLength > length) {
+                res = i
+                length = newLength
+            }
+        }
+        return res
     }
 
-    private fun findShortestWay(position: List<Int>, goal: Int): List<List<Int>> {
+    private fun findShortestWay(position: List<Int>, goal: Int, obstacles: Set<Array<Array<Int>>> = field.barriers): List<List<Int>> {
         val result = mutableListOf<List<Int>>()
         var d = 0
         val visitedCells = mutableListOf(position)
         val distances = mutableMapOf(Pair(position, d))
         var notFound = true
         while (notFound) {
-            d += 1
-            expandPlayer(position)?.forEach {
-                if (it[0] == goal) {
-                    visitedCells.add(it)
-                    distances[it] = d
-                    notFound = false
-                }
-                else {
-                    if (notFound) {
+            val positions = distances.keys.filter { distances[it] == d }
+            for (p in positions) {
+                //println("Клетка [${p[0]},${p[1]}], расстояние ${d}")
+                expandPlayer(p, obstacles)?.forEach {
+                    if (it[0] == goal && notFound) {
                         visitedCells.add(it)
-                        distances[it] = d
+                        distances[it] = d + 1
+                        notFound = false
+                        //println("Клетка [${it[0]},${it[1]}], на расстоянии ${d + 1} является конечной, выхожу из алгоритма")
+                    }
+                    else {
+                        if (notFound && !visitedCells.contains(it)) {
+                            visitedCells.add(it)
+                            distances[it] = d + 1
+                        }
                     }
                 }
             }
+            d += 1
         }
-        var current = visitedCells.last()
+//        for (row in field.height - 1 downTo 0) {
+//            for (col in 0 until field.width) {
+//                print(distances[listOf(row, col)].toString() + "\t")
+//            }
+//            println()
+//        }
+        val lastCell = visitedCells.filter { it[0] == goal }
+        assert(lastCell.size == 1)
+        var current = lastCell[0]
+//        println("Начинаем с клетки [${current[0]},${current[1]}]")
         while (d > 0) {
-            val nearbyCells = expandPlayer(current)
-            assert(nearbyCells != null)
-            if (nearbyCells == null)
-                throw NullPointerException()
+            val nearbyCells = expandPlayer(current, obstacles) ?: throw NullPointerException()
             for (i in nearbyCells) {
                 if (distances[i] == d - 1) {
+//                    println("Начинаем с клетки [${current[0]},${current[1]}]")
                     current = i
-                    result.add(d, i)
+                    result.add(i)
+                    break
                 }
-                break
             }
             d -= 1
         }
-        result.add(0, position)
+        result.add(position)
+        result.reverse()
+        println("Найденный путь из [${position[0]},${position[1]}] в [${result.last()[0]},${result.last()[1]}] длины ${result.size}:")
+        for (cell in result) {
+            print("[${current[0]},${current[1]}] -")
+        }
+        println()
+//        println("Путь из [${position[0]},${position[1]}] в [${result.last()[0]},${result.last()[1]}] длины ${result.size}")
         return result
     }
 
@@ -147,6 +190,7 @@ class Game(private val startGameInfo: StartGameInfo, lobbyInfo: LobbyInfo) {
                 }
             }
         }
+        println("Expand obstacles ended")
         return res
     }
 
@@ -232,5 +276,9 @@ class Game(private val startGameInfo: StartGameInfo, lobbyInfo: LobbyInfo) {
 
     fun addSendListener(sendFunction: (String)->Unit) {
         send.add(sendFunction)
+    }
+
+    fun addReceiveListener(receiveFunction: KFunction0<String>) {
+        receive.add(receiveFunction)
     }
 }
